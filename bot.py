@@ -1777,8 +1777,8 @@ def run_valr_test():
     print(f"  Server time : {t.get('time','error')}")
     tk, _ = valr_request("/v1/public/BTCUSDC/marketsummary", public=True)
     if "lastTradedPrice" in tk:
-        print(f"  BTC/USDC : R{float(tk['lastTradedPrice']):,.2f}  "
-              f"bid=R{float(tk.get('bidPrice',0)):,.0f}  ask=R{float(tk.get('askPrice',0)):,.0f}")
+        print(f"  BTC/USDC : ${float(tk['lastTradedPrice']):,.2f}  "
+              f"bid=${float(tk.get('bidPrice',0)):,.0f}  ask=${float(tk.get('askPrice',0)):,.0f}")
     bals, _ = valr_request("/v1/account/balances", api_key=key, api_secret=sec)
     if isinstance(bals, list):
         print("  Balances:")
