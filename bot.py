@@ -6,11 +6,11 @@ Run modes:
   python bot.py live      → headless live/dry trader
   python bot.py backtest  → backtest
   python bot.py valrtest  → VALR connection test
-  python bot.py premium   → ZAR premium check
+  python bot.py premium   → USDC premium check
 
 Environment variables (set in Render dashboard):
   EXCHANGE          VALR or BINANCE  (default: VALR)
-  TRADING_PAIR      e.g. BTCZAR      (default: BTCZAR)
+  TRADING_PAIR      e.g. BTCUSDC      (default: BTCUSDC)
   VALR_API_KEY      your VALR API key
   VALR_API_SECRET   your VALR API secret
   BINANCE_API_KEY   your Binance API key
@@ -72,7 +72,7 @@ LOG_FILE    = _state_dir / "bot.log"
 
 DEFAULT_PARAMS = {
     "exchange":           os.environ.get("EXCHANGE", "VALR"),
-    "pair":               os.environ.get("TRADING_PAIR", "BTCZAR"),
+    "pair":               os.environ.get("TRADING_PAIR", "BTCUSDC"),
     "gen_capital":        float(os.environ.get("GEN_CAPITAL", "1100")),
     "slot_size":          float(os.environ.get("SLOT_SIZE", "100")),
     "split_min_size":     30.0,
@@ -96,7 +96,7 @@ DEFAULT_PARAMS = {
 
 PARAM_LABELS = {
     "exchange":           ("Exchange",               "VALR or BINANCE"),
-    "pair":               ("Trading pair",           "e.g. BTCZAR or BTCUSDT"),
+    "pair":               ("Trading pair",           "e.g. BTCUSDC or BTCUSDT"),
     "gen_capital":        ("Capital per generation", "Currency per generation"),
     "slot_size":          ("Slot size",              "Capital per slot"),
     "split_min_size":     ("Min slot size (split)",  "No split below this"),
@@ -186,7 +186,7 @@ def load_api_config():
                 "pair": os.environ.get("TRADING_PAIR", "BTCUSDT")}
     if valr_key:
         return {"exchange": "VALR", "api_key": valr_key, "api_secret": valr_sec,
-                "pair": os.environ.get("TRADING_PAIR", "BTCZAR")}
+                "pair": os.environ.get("TRADING_PAIR", "BTCUSDC")}
 
     # Fallback: encrypted local file (local dev only)
     if _API_FILE.exists():
@@ -196,7 +196,7 @@ def load_api_config():
             pass
 
     return {"api_key": "", "api_secret": "", "exchange": exchange,
-            "pair": os.environ.get("TRADING_PAIR", "BTCZAR")}
+            "pair": os.environ.get("TRADING_PAIR", "BTCUSDC")}
 
 def save_api_config(cfg):
     _API_FILE.write_bytes(_xor_enc(cfg))
@@ -259,13 +259,13 @@ def binance_request(path, method="GET", params=None, public=False,
         return {"error": str(e)}, 0
 
 def parse_pair(pair):
-    for q in ["USDT", "USDC", "BUSD", "ZAR", "EUR", "GBP", "USD"]:
+    for q in ["USDT", "USDC", "BUSD", "USDC", "EUR", "GBP", "USD"]:
         if pair.endswith(q):
             return pair[:-len(q)], q
     return pair[:3], pair[3:]
 
 def fmt_price(val, quote):
-    sym = {"ZAR": "R", "USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
+    sym = {"USDC": "R", "USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
     if val >= 10000: return f"{sym}{val:,.0f}"
     if val >= 1:     return f"{sym}{val:,.2f}"
     return f"{sym}{val:.6f}"
@@ -611,8 +611,8 @@ function showTab(name, btn) {
 }
 
 function sym(cfg) {
-  var p = (cfg && cfg.pair) || 'BTCZAR';
-  if (p.endsWith('ZAR'))  return 'R';
+  var p = (cfg && cfg.pair) || 'BTCUSDC';
+  if (p.endsWith('USDC'))  return 'R';
   if (p.endsWith('USDT') || p.endsWith('USDC') || p.endsWith('USD') || p.endsWith('BUSD')) return '$';
   if (p.endsWith('EUR'))  return '\\u20ac';
   if (p.endsWith('GBP'))  return '\\u00a3';
@@ -919,7 +919,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             api_cfg  = load_api_config()
             cfg_now  = (_snap.get("cfg") or load_strategy_config())
             exchange = cfg_now.get("exchange", "VALR")
-            pair     = cfg_now.get("pair", "BTCZAR")
+            pair     = cfg_now.get("pair", "BTCUSDC")
             api_key  = api_cfg.get("api_key", "")
             api_sec  = api_cfg.get("api_secret", "")
             balances = get_account_balance(exchange, pair, api_key, api_sec)
@@ -1042,7 +1042,7 @@ def bot_place_limit_sell(btc_qty, sell_price, slot_id, gen_id,
             return oid
         if status == 400 and isinstance(data, dict) and data.get("code") == -12005:
             sell_base_cur = symbol
-            for q in ["USDT", "USDC", "BUSD", "ZAR", "EUR", "GBP", "USD"]:
+            for q in ["USDT", "USDC", "BUSD", "USDC", "EUR", "GBP", "USD"]:
                 if symbol.endswith(q):
                     sell_base_cur = symbol[:-len(q)]
                     break
@@ -1096,7 +1096,7 @@ def bot_market_buy(quote_amount, slot_id, gen_id,
 
         if status == 400 and isinstance(data, dict) and data.get("code") == -12005:
             simple_body = {"side": "BUY"}
-            for q in ["USDT", "USDC", "BUSD", "ZAR", "EUR", "GBP", "USD"]:
+            for q in ["USDT", "USDC", "BUSD", "USDC", "EUR", "GBP", "USD"]:
                 if symbol.endswith(q):
                     simple_body["payInCurrency"] = q
                     break
@@ -1232,7 +1232,7 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
     slot_size = gen["slot_size"]
     gen_id    = gen["id"]
     exchange  = cfg.get("exchange", "VALR")
-    symbol    = cfg.get("pair", "BTCZAR")
+    symbol    = cfg.get("pair", "BTCUSDC")
     dry_run   = cfg.get("dry_run", True)
 
     BUY_DROP        = cfg.get("buy_drop_pct", 2.0) / 100
@@ -1361,8 +1361,8 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
     gen["slot_size"] = slot_size
 
 def print_bot_dashboard(state, current_price, cfg):
-    _, quote = parse_pair(cfg.get("pair", "BTCZAR"))
-    sym  = {"ZAR": "R", "USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
+    _, quote = parse_pair(cfg.get("pair", "BTCUSDC"))
+    sym  = {"USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
     mode = "[DRY RUN]" if cfg.get("dry_run", True) else "[LIVE]"
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n{'='*76}")
@@ -1417,7 +1417,7 @@ def run_live_bot():
     api_key  = api_cfg.get("api_key", "")
     api_sec  = api_cfg.get("api_secret", "")
     exchange = cfg.get("exchange", "VALR")
-    pair     = cfg.get("pair", "BTCZAR")
+    pair     = cfg.get("pair", "BTCUSDC")
     interval = cfg.get("check_interval_min", 5) * 60
     dry_run  = cfg.get("dry_run", True)
 
@@ -1469,7 +1469,7 @@ def run_live_bot():
                              f"({'DRY RUN' if new_cfg['dry_run'] else 'LIVE TRADING'})")
             cfg      = new_cfg
             exchange = cfg.get("exchange", "VALR")
-            pair     = cfg.get("pair", "BTCZAR")
+            pair     = cfg.get("pair", "BTCUSDC")
             interval = cfg.get("check_interval_min", 5) * 60
             lkb      = cfg.get("lookback_hours", 12)
             _bot_status["dry_run"] = cfg.get("dry_run", True)
@@ -1741,36 +1741,30 @@ def run_backtest():
     print(f"{'='*65}")
 
 # =============================================================
-#  SECTION 8 — ZAR PREMIUM & VALR TEST
+#  SECTION 8 — USDC PREMIUM & VALR TEST
 # =============================================================
 def run_premium_check():
     print("\n  Fetching prices...")
     try:
         req = urllib.request.Request(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,zar",
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,usdc",
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as r:
             cg = json.loads(r.read().decode())
         btc_usd = cg["bitcoin"]["usd"]
-        btc_zar_cg = cg["bitcoin"]["zar"]
+        btc_USDC_cg = cg["bitcoin"]["usdc"]
     except Exception as e:
         print(f"  CoinGecko failed: {e}"); return
     api = load_api_config()
-    vp  = get_live_price("VALR", "BTCZAR", api.get("api_key",""), api.get("api_secret",""))
-    usd_zar = btc_zar_cg / btc_usd
-    print(f"\n{'='*55}\n  ZAR PREMIUM MONITOR\n{'='*55}")
+    vp  = get_live_price("VALR", "BTCUSDC", api.get("api_key",""), api.get("api_secret",""))
+    usd_USDC = btc_USDC_cg / btc_usd
+    print(f"\n{'='*55}\n  USDC PREMIUM MONITOR\n{'='*55}")
     print(f"  BTC/USD  (global)   : ${btc_usd:>12,.2f}")
-    print(f"  BTC/ZAR  (CoinGecko): R{btc_zar_cg:>12,.2f}")
-    print(f"  USD/ZAR  (implied)  : R{usd_zar:>12,.4f}")
     if vp:
-        prem = (vp["price"] - btc_zar_cg) / btc_zar_cg * 100
-        print(f"  BTC/ZAR  (VALR)     : R{vp['price']:>12,.2f}")
+        prem = (vp["price"] - btc_USDC_cg) / btc_USDC_cg * 100
+        print(f"  BTC/USDC  (VALR)     : R{vp['price']:>12,.2f}")
         print(f"  SA Premium          : {prem:>+11.2f}%")
-        signal = ("STRONG ZAR EDGE — use VALR" if prem > 5
-                  else "MILD ZAR EDGE" if prem > 2
-                  else "NEUTRAL" if prem > -1
-                  else "USE USD EXCHANGE")
-        print(f"  Signal              : {signal}")
+       
     print(f"{'='*55}\n")
 
 def run_valr_test():
@@ -1781,16 +1775,16 @@ def run_valr_test():
     print("\n  Testing VALR connection (read-only)...")
     t, _ = valr_request("/v1/public/time", public=True)
     print(f"  Server time : {t.get('time','error')}")
-    tk, _ = valr_request("/v1/public/BTCZAR/marketsummary", public=True)
+    tk, _ = valr_request("/v1/public/BTCUSDC/marketsummary", public=True)
     if "lastTradedPrice" in tk:
-        print(f"  BTC/ZAR : R{float(tk['lastTradedPrice']):,.2f}  "
+        print(f"  BTC/USDC : R{float(tk['lastTradedPrice']):,.2f}  "
               f"bid=R{float(tk.get('bidPrice',0)):,.0f}  ask=R{float(tk.get('askPrice',0)):,.0f}")
     bals, _ = valr_request("/v1/account/balances", api_key=key, api_secret=sec)
     if isinstance(bals, list):
         print("  Balances:")
         for b in bals:
             tot = float(b.get("total", 0))
-            if tot > 0 or b.get("currency") in ("ZAR","BTC","USDT"):
+            if tot > 0 or b.get("currency") in ("BTC","USDC"):
                 print(f"    {b.get('currency','?'):6s}  total={tot:.6f}  "
                       f"avail={float(b.get('available',0)):.6f}")
     else:
@@ -1829,13 +1823,13 @@ def run_gui():
 
         @staticmethod
         def _parse_pair(pair):
-            for q in ["USDT","USDC","BUSD","ZAR","EUR","GBP","USD"]:
+            for q in ["USDT","USDC","BUSD","EUR","GBP","USD"]:
                 if pair.endswith(q): return pair[:-len(q)], q
             return pair[:3], pair[3:]
 
         @staticmethod
         def _fmt(val, quote):
-            sym = {"ZAR":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            sym = {"USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             if val >= 10000: return f"{sym}{val:,.0f}"
             if val >= 1:     return f"{sym}{val:,.2f}"
             return f"{sym}{val:.6f}"
@@ -2288,9 +2282,9 @@ def run_gui():
             pr = tk.Frame(fr, bg="#F5F5F5"); pr.pack(fill="x", pady=6)
             tk.Label(pr, text="Trading Pair:", bg="#F5F5F5", font=("Segoe UI",10),
                 width=12, anchor="e").pack(side="left", padx=(0,8))
-            self.pair_combo = ttk.Combobox(pr, values=[self.params.get("pair","BTCZAR")],
+            self.pair_combo = ttk.Combobox(pr, values=[self.params.get("pair","BTCUSDC")],
                 width=20, state="readonly")
-            self.pair_combo.set(self.params.get("pair","BTCZAR"))
+            self.pair_combo.set(self.params.get("pair","BTCUSDC"))
             self.pair_combo.pack(side="left")
             self.pair_combo.bind("<<ComboboxSelected>>", self._on_pair_selected)
             tk.Button(pr, text="↻ Fetch pairs",
@@ -2347,7 +2341,7 @@ def run_gui():
             api_key = api_cfg.get("api_key","")
             api_sec = api_cfg.get("api_secret","")
             exchange= cfg.get("exchange","VALR")
-            pair    = cfg.get("pair","BTCZAR")
+            pair    = cfg.get("pair","BTCUSDC")
             interval= cfg.get("check_interval_min",5) * 60
 
             state = None
@@ -2407,7 +2401,7 @@ def run_gui():
             key  = self.api_cfg.get("api_key","")
             sec  = self.api_cfg.get("api_secret","")
             exch = self.params.get("exchange","VALR")
-            pair = self.params.get("pair","BTCZAR")
+            pair = self.params.get("pair","BTCUSDC")
             pd   = get_live_price(exch, pair, key, sec)
             if pd:
                 self.price_data = pd
@@ -2425,16 +2419,16 @@ def run_gui():
             key  = self.api_cfg.get("api_key","")
             sec  = self.api_cfg.get("api_secret","")
             exch = self.params.get("exchange","VALR")
-            pair = self.params.get("pair","BTCZAR")
+            pair = self.params.get("pair","BTCUSDC")
             bals = get_account_balance(exch, pair, key, sec)
             if bals and "_error" not in bals:
                 self.balances = bals
                 self.after(0, self._update_balance_display)
 
         def _update_balance_display(self):
-            _, quote = self._parse_pair(self.params.get("pair","BTCZAR"))
+            _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
             for cur, info in self.balances.items():
-                sym = {"ZAR":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(cur, "")
+                sym = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(cur, "")
                 if info.get("is_quote"):
                     self.bal_q.configure(text=f"{cur}: {sym}{info['total']:,.2f}  (avail: {sym}{info['available']:,.2f})")
                 elif info.get("is_base"):
@@ -2467,7 +2461,7 @@ def run_gui():
             self.upd_lbl.configure(text=f"Last update: {datetime.now().strftime('%H:%M:%S')}")
             pd = self.price_data
             if pd:
-                _, quote = self._parse_pair(self.params.get("pair","BTCZAR"))
+                _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
                 self.price_hdr_lbl.configure(text=f"Price ({self.params.get('pair','')})")
                 self.metric_cards["price"].configure(text=self._fmt(pd["price"], quote))
                 chg = pd.get("chg","?")
@@ -2484,15 +2478,15 @@ def run_gui():
 
             state = self.bot_state
             if not state:
-                self._show_strategy_preview(self.params.get("pair","BTCZAR"))
+                self._show_strategy_preview(self.params.get("pair","BTCUSDC"))
                 return
 
             for item in self.gen_tree.get_children():
                 self.gen_tree.delete(item)
             price   = self.price_data.get("price", 0)
             gens    = state.get("generations", [])
-            _, quote = self._parse_pair(self.params.get("pair","BTCZAR"))
-            sym     = {"ZAR":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
+            sym     = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             total_val = total_real = total_open = total_idle = 0
 
             for gen in gens:
@@ -2531,7 +2525,7 @@ def run_gui():
         def _show_strategy_preview(self, pair):
             for item in self.gen_tree.get_children(): self.gen_tree.delete(item)
             _, quote = self._parse_pair(pair)
-            sym = {"ZAR":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            sym = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             def _pv(key, default):
                 if key in self.param_vars:
                     try:
@@ -2558,8 +2552,8 @@ def run_gui():
             for item in self.pos_tree.get_children(): self.pos_tree.delete(item)
             state = self.bot_state; price = self.price_data.get("price",0)
             filt  = self.pos_filter.get()
-            _, quote = self._parse_pair(self.params.get("pair","BTCZAR"))
-            sym  = {"ZAR":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
+            sym  = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             for gen in state.get("generations",[]):
                 gid = gen.get("id",1)
                 for s in gen.get("slots",[]):
@@ -2625,7 +2619,7 @@ def run_gui():
             cfg = {"exchange": self.exchange_var.get(),
                    "api_key":  self.apikey_var.get().strip(),
                    "api_secret": self.apisecret_var.get().strip(),
-                   "pair": self.pair_combo.get() if hasattr(self,"pair_combo") else self.params.get("pair","BTCZAR")}
+                   "pair": self.pair_combo.get() if hasattr(self,"pair_combo") else self.params.get("pair","BTCUSDC")}
             save_api_config(cfg); self.api_cfg = cfg
             self.params["pair"] = cfg["pair"]
             self._log("API credentials saved (encrypted locally)")
@@ -2638,7 +2632,7 @@ def run_gui():
                 exchange = self.exchange_var.get()
                 key      = self.apikey_var.get().strip()
                 secret   = self.apisecret_var.get().strip()
-                pair     = self.pair_combo.get() if hasattr(self,"pair_combo") else self.params.get("pair","BTCZAR")
+                pair     = self.pair_combo.get() if hasattr(self,"pair_combo") else self.params.get("pair","BTCUSDC")
                 price    = get_live_price(exchange, pair, key, secret)
                 if price:
                     _, quote = self._parse_pair(pair)
