@@ -612,7 +612,7 @@ function showTab(name, btn) {
 
 function sym(cfg) {
   var p = (cfg && cfg.pair) || 'BTCUSDC';
-  if (p.endsWith('USDC'))  return 'R';
+  if (p.endsWith('USDC'))  return '$';
   if (p.endsWith('USDT') || p.endsWith('USDC') || p.endsWith('USD') || p.endsWith('BUSD')) return '$';
   if (p.endsWith('EUR'))  return '\\u20ac';
   if (p.endsWith('GBP'))  return '\\u00a3';
