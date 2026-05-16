@@ -265,7 +265,7 @@ def parse_pair(pair):
     return pair[:3], pair[3:]
 
 def fmt_price(val, quote):
-    sym = {"USDC": "R", "USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
+    sym = {"USDC": "$", "USD": "$", "USDT": "$", "USDC": "$", "EUR": "€", "GBP": "£"}.get(quote, quote + " ")
     if val >= 10000: return f"{sym}{val:,.0f}"
     if val >= 1:     return f"{sym}{val:,.2f}"
     return f"{sym}{val:.6f}"
@@ -2428,7 +2428,7 @@ def run_gui():
         def _update_balance_display(self):
             _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
             for cur, info in self.balances.items():
-                sym = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(cur, "")
+                sym = {"USDC":"$","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(cur, "")
                 if info.get("is_quote"):
                     self.bal_q.configure(text=f"{cur}: {sym}{info['total']:,.2f}  (avail: {sym}{info['available']:,.2f})")
                 elif info.get("is_base"):
@@ -2486,7 +2486,7 @@ def run_gui():
             price   = self.price_data.get("price", 0)
             gens    = state.get("generations", [])
             _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
-            sym     = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            sym     = {"USDC":"$","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             total_val = total_real = total_open = total_idle = 0
 
             for gen in gens:
@@ -2525,7 +2525,7 @@ def run_gui():
         def _show_strategy_preview(self, pair):
             for item in self.gen_tree.get_children(): self.gen_tree.delete(item)
             _, quote = self._parse_pair(pair)
-            sym = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            sym = {"USDC":"$","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             def _pv(key, default):
                 if key in self.param_vars:
                     try:
@@ -2553,7 +2553,7 @@ def run_gui():
             state = self.bot_state; price = self.price_data.get("price",0)
             filt  = self.pos_filter.get()
             _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
-            sym  = {"USDC":"R","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
+            sym  = {"USDC":"$","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(quote, quote+" ")
             for gen in state.get("generations",[]):
                 gid = gen.get("id",1)
                 for s in gen.get("slots",[]):
