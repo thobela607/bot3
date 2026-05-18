@@ -1028,23 +1028,23 @@ def bot_place_limit_sell(btc_qty, sell_price, slot_id, gen_id,
                      f"{btc_qty:.6f} @ {sell_price:,.2f} id={oid}")
         return oid
     if exchange == "VALR":
-    ts   = int(time.time())
+        ts   = int(time.time())
 
-    sell_price_int = round(sell_price)   # ✅ NEW LINE
+        sell_price_int = round(sell_price)   # ✅ NEW LINE
 
-    body = {
-        "side": "SELL",
-        "quantity": f"{btc_qty:.8f}",
-        "price": str(sell_price_int),    # ✅ FIXED
-        "pair": symbol,
-        "timeInForce": "GTC",
-        "customerOrderId": f"LADDER-{gen_id}-{slot_id}-{ts}"[:50]
-    }
+        body = {
+            "side": "SELL",
+            "quantity": f"{btc_qty:.8f}",
+            "price": str(sell_price_int),    # ✅ FIXED
+            "pair": symbol,
+            "timeInForce": "GTC",
+            "customerOrderId": f"LADDER-{gen_id}-{slot_id}-{ts}"[:50]
+        }
 
-    data, status = valr_request("/v1/orders/limit", method="POST", body=body,
-                                api_key=api_key, api_secret=api_secret)
+        data, status = valr_request("/v1/orders/limit", method="POST", body=body,
+                                    api_key=api_key, api_secret=api_secret)
 
-    logging.info(f"VALR LIMIT SELL status={status} data={data}")
+        logging.info(f"VALR LIMIT SELL status={status} data={data}")
 
     if status in (200, 202):
         oid = str(data.get("id", data.get("orderId", "")))
