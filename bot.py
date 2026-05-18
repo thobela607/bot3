@@ -1028,35 +1028,29 @@ def bot_place_limit_sell(btc_qty, sell_price, slot_id, gen_id,
                      f"{btc_qty:.6f} @ {sell_price:,.2f} id={oid}")
         return oid
     if exchange == "VALR":
-        ts   = int(time.time())
-        body = {"side": "SELL", "quantity": f"{btc_qty:.8f}", "price": f"{sell_price:.8f}",
-                "pair": symbol, "timeInForce": "GTC",
-                "customerOrderId": f"LADDER-{gen_id}-{slot_id}-{ts}"[:50]}
-        data, status = valr_request("/v1/orders/limit", method="POST", body=body,
-                                    api_key=api_key, api_secret=api_secret)
-        logging.info(f"VALR LIMIT SELL status={status} data={data}")
-        if status in (200, 202):
-            oid = str(data.get("id", data.get("orderId", "")))
-            logging.info(f"LIMIT SELL PLACED Gen{gen_id} Sl{slot_id+1} "
-                         f"{btc_qty:.8f} @ {sell_price:.8f} id={oid}")
-            return oid
-        if status == 400 and isinstance(data, dict) and data.get("code") == -12005:
-            sell_base_cur = symbol
-            for q in ["USDT", "USDC", "BUSD", "USDC", "EUR", "GBP", "USD"]:
-                if symbol.endswith(q):
-                    sell_base_cur = symbol[:-len(q)]
-                    break
-            data2, status2 = valr_request(
-                f"/v1/simple/{symbol}/order",
-                method="POST", body={
-                    "payInCurrency": sell_base_cur,
-                    "payAmount":     f"{btc_qty:.8f}",
-                    "side":          "SELL",
-                }, api_key=api_key, api_secret=api_secret)
-            logging.info(f"VALR SIMPLE SELL status={status2} data={data2}")
-            if status2 in (200, 202):
-                oid = str(data2.get("id", data2.get("orderId", f"SIMPLE-{ts}")))
-                return oid
+    ts   = int(time.time())
+
+    sell_price_int = round(sell_price)   # ✅ NEW LINE
+
+    body = {
+        "side": "SELL",
+        "quantity": f"{btc_qty:.8f}",
+        "price": str(sell_price_int),    # ✅ FIXED
+        "pair": symbol,
+        "timeInForce": "GTC",
+        "customerOrderId": f"LADDER-{gen_id}-{slot_id}-{ts}"[:50]
+    }
+
+    data, status = valr_request("/v1/orders/limit", method="POST", body=body,
+                                api_key=api_key, api_secret=api_secret)
+
+    logging.info(f"VALR LIMIT SELL status={status} data={data}")
+
+    if status in (200, 202):
+        oid = str(data.get("id", data.get("orderId", "")))
+        logging.info(f"LIMIT SELL PLACED Gen{gen_id} Sl{slot_id+1} "
+                     f"{btc_qty:.8f} @ {sell_price_int} id={oid}")   # ✅ FIXED
+        return oid
     elif exchange == "BINANCE":
         params = {"symbol": symbol, "side": "SELL", "type": "LIMIT",
                   "timeInForce": "GTC", "quantity": f"{btc_qty:.6f}",
