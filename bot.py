@@ -86,7 +86,7 @@ DEFAULT_PARAMS = {
     "escalation_max_lvl": 3,
     "entry_decay_days":   15,
     "entry_decay_rate":   1.0,
-    "check_interval_min": int(os.environ.get("CHECK_INTERVAL_MIN", "5")),
+    "check_interval_min": int(os.environ.get("CHECK_INTERVAL_MIN", "1")),
     "dry_run":            os.environ.get("DRY_RUN", "true").lower() != "false",
 }
 
@@ -488,13 +488,13 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
 
 <div id="tab-dashboard" class="tab on">
   <div class="cards">
-    <div class="card"><div class="lbl">Portfolio Value</div><div class="val blue" id="c-port">&#8212;</div></div>
-    <div class="card"><div class="lbl">Invested</div><div class="val" id="c-inv">&#8212;</div></div>
-    <div class="card"><div class="lbl">Total P&amp;L</div><div class="val" id="c-pnl">&#8212;</div></div>
+    <div class="card"><div class="lbl">Portfolio Value</div><div class="val blue" id="c-port">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px">USDC + BTC + Slots</div></div>
+    <div class="card"><div class="lbl">Free Cash (USDC)</div><div class="val green" id="c-inv">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px">Available on exchange</div></div>
+    <div class="card"><div class="lbl">Slot Value (Open)</div><div class="val orange" id="c-pnl">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px">BTC in sell orders × price</div></div>
     <div class="card"><div class="lbl">Realised Profit</div><div class="val green" id="c-real">&#8212;</div></div>
     <div class="card"><div class="lbl">Open Positions</div><div class="val" id="c-open">&#8212;</div></div>
-    <div class="card"><div class="lbl" id="c-qlbl">Quote Balance</div><div class="val blue" id="c-qbal">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px" id="c-qrsv"></div></div>
-    <div class="card"><div class="lbl" id="c-blbl">Base Balance</div><div class="val" id="c-bbal">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px" id="c-brsv"></div></div>
+    <div class="card"><div class="lbl" id="c-qlbl">USDC Balance</div><div class="val blue" id="c-qbal">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px" id="c-qrsv"></div></div>
+    <div class="card"><div class="lbl" id="c-blbl">BTC Balance</div><div class="val" id="c-bbal">&#8212;</div><div style="font-size:10px;color:#484f58;margin-top:2px" id="c-brsv"></div></div>
   </div>
   <div id="gens"></div>
 </div>
@@ -667,20 +667,14 @@ function updateDashboard(d) {
     document.getElementById('gens').innerHTML = '<div class="no-data">Bot not yet started &#8212; waiting for first tick</div>';
     return;
   }
-  var totalVal = 0, totalReal = 0, totalOpen = 0;
-  var invested = state.total_invested || 0;
+  var totalReal = 0, totalOpen = 0, totalSlotVal = 0;
   (state.generations || []).forEach(function(gen){
     var btcV = (gen.slots||[]).filter(function(sl){return sl.state==='DIP'}).reduce(function(a,sl){return a+sl.dip_btc*price},0);
-    totalVal  += (gen.free_cash||0) + btcV;
+    totalSlotVal += btcV;
     totalReal += (gen.trade_log||[]).filter(function(t){return t.type==='SELL'}).reduce(function(a,t){return a+(t.profit||0)},0);
     totalOpen += (gen.slots||[]).filter(function(sl){return sl.state==='DIP'}).length;
   });
-  var pnl = totalVal - invested;
-  document.getElementById('c-port').textContent = s+totalVal.toLocaleString('en',{maximumFractionDigits:0});
-  document.getElementById('c-inv').textContent  = s+invested.toLocaleString('en',{maximumFractionDigits:0});
-  var pe = document.getElementById('c-pnl');
-  pe.textContent = (pnl>=0?'+':'')+s+Math.abs(pnl).toLocaleString('en',{maximumFractionDigits:0});
-  pe.className   = 'val '+pnlColor(pnl);
+  document.getElementById('c-pnl').textContent = s+totalSlotVal.toLocaleString('en',{maximumFractionDigits:0});
   document.getElementById('c-real').textContent = (totalReal>=0?'+':'')+s+Math.abs(totalReal).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('c-open').textContent = totalOpen;
 
@@ -830,42 +824,48 @@ async function refreshBalances() {
   try {
     var r = await fetch('/api/balances');
     var d = await r.json();
-    var balances = d.balances || {};
-    var s = sym(d.cfg || _cfg);
+    var balances  = d.balances || {};
+    var s         = sym(d.cfg || _cfg);
+    var lastPrice = d.price || 0;
     if (balances._error) {
       document.getElementById('c-qbal').textContent = 'Error';
       document.getElementById('c-bbal').textContent = 'Error';
       return;
     }
-    var quoteAvail = 0, baseAvail = 0;
-    var lastPrice  = (_snap && _snap.price_data) ? (_snap.price_data.price || 0) : 0;
+    var quoteTotal = 0, quoteAvail = 0, baseTotal = 0;
     Object.keys(balances).forEach(function(cur) {
       var b = balances[cur];
       if (b.is_quote) {
+        quoteTotal = b.total    || 0;
         quoteAvail = b.available || 0;
         document.getElementById('c-qlbl').textContent = cur + ' Balance';
-        document.getElementById('c-qbal').textContent = s + quoteAvail.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+        document.getElementById('c-qbal').textContent = s + quoteTotal.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
         var rsv = b.reserved || 0;
         document.getElementById('c-qrsv').textContent = rsv > 0 ? 'Reserved: '+s+rsv.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
       }
       if (b.is_base) {
-        baseAvail = b.available || 0;
+        baseTotal = b.total || 0;
         document.getElementById('c-blbl').textContent = cur + ' Balance';
-        document.getElementById('c-bbal').textContent = baseAvail.toFixed(6) + ' ' + cur;
+        document.getElementById('c-bbal').textContent = baseTotal.toFixed(6) + ' ' + cur + (lastPrice ? ' ≈ '+s+(baseTotal*lastPrice).toLocaleString('en',{maximumFractionDigits:0}) : '');
         var rsv = b.reserved || 0;
         document.getElementById('c-brsv').textContent = rsv > 0 ? 'Reserved: '+rsv.toFixed(6) : '';
       }
     });
-    var totalVal = quoteAvail + baseAvail * lastPrice;
-    if (totalVal > 0) {
-      document.getElementById('c-port').textContent = s + totalVal.toLocaleString('en',{maximumFractionDigits:0});
+    // Portfolio = total USDC + total BTC * price (includes BTC locked in sell orders)
+    var portfolioVal = quoteTotal + baseTotal * lastPrice;
+    if (portfolioVal > 0) {
+      document.getElementById('c-port').textContent = s + portfolioVal.toLocaleString('en',{maximumFractionDigits:0});
+    }
+    // Free cash = USDC available on exchange
+    if (quoteAvail > 0 || quoteTotal > 0) {
+      document.getElementById('c-inv').textContent = s + quoteAvail.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
     }
   } catch(e) { console.error('Balance refresh failed', e); }
 }
 
 refresh();
 refreshBalances();
-setInterval(refresh, 30000);
+setInterval(refresh, 60000);
 setInterval(refreshBalances, 60000);
 </script>
 </body>
@@ -917,8 +917,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             pair     = cfg_now.get("pair", "BTCUSDC")
             api_key  = api_cfg.get("api_key", "")
             api_sec  = api_cfg.get("api_secret", "")
-            balances = get_account_balance(exchange, pair, api_key, api_sec)
-            self._json({"balances": balances or {}, "exchange": exchange, "pair": pair})
+            balances  = get_account_balance(exchange, pair, api_key, api_sec)
+            cur_price = (_snap.get("price_data") or {}).get("price", 0)
+            self._json({"balances": balances or {}, "exchange": exchange,
+                        "pair": pair, "price": cur_price})
         elif path == "/api/logs":
             self._json({"lines": list(_log_lines[-200:])})
         elif path == "/api/export":
@@ -1221,6 +1223,21 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
     exchange  = cfg.get("exchange", "VALR")
     symbol    = cfg.get("pair", "BTCUSDC")
     dry_run   = cfg.get("dry_run", True)
+
+    # Dynamically resize slots when user changes n_slots in strategy
+    target_n = int(cfg.get("n_slots", gen["n_slots"]))
+    if len(slots) < target_n:
+        for i in range(len(slots), target_n):
+            slots.append(make_slot(i))
+        gen["n_slots"] = target_n
+        logging.info(f"Gen{gen_id} slots expanded to {target_n}")
+    elif len(slots) > target_n:
+        # Only remove IDLE slots from the tail; never close open positions
+        while len(slots) > target_n and slots[-1]["state"] == "IDLE":
+            slots.pop()
+        gen["n_slots"] = len(slots)
+        if gen["n_slots"] < target_n:
+            logging.info(f"Gen{gen_id} could only reduce to {gen['n_slots']} (open slots retained)")
 
     BUY_DROP        = cfg.get("buy_drop_pct", 2.0) / 100
     SELL_BASE       = cfg.get("dip_sell_pct", 5.0) / 100
