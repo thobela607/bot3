@@ -73,10 +73,8 @@ LOG_FILE    = _state_dir / "bot.log"
 DEFAULT_PARAMS = {
     "exchange":           os.environ.get("EXCHANGE", "VALR"),
     "pair":               os.environ.get("TRADING_PAIR", "BTCUSDC"),
-    "gen_capital":        float(os.environ.get("GEN_CAPITAL", "1100")),
-    "slot_size":          float(os.environ.get("SLOT_SIZE", "100")),
-    "split_min_size":     30.0,
-    "max_generations":    3,
+    "n_slots":            int(os.environ.get("N_SLOTS", "10")),
+    "slot_size":          int(float(os.environ.get("SLOT_SIZE", "100"))),
     "buy_drop_pct":       2.0,
     "lookback_hours":     12,
     "dip_sell_pct":       5.0,
@@ -88,8 +86,6 @@ DEFAULT_PARAMS = {
     "escalation_max_lvl": 3,
     "entry_decay_days":   15,
     "entry_decay_rate":   1.0,
-    "new_gen_threshold":  20.0,
-    "new_gen_cooldown_d": 30,
     "check_interval_min": int(os.environ.get("CHECK_INTERVAL_MIN", "5")),
     "dry_run":            os.environ.get("DRY_RUN", "true").lower() != "false",
 }
@@ -97,10 +93,8 @@ DEFAULT_PARAMS = {
 PARAM_LABELS = {
     "exchange":           ("Exchange",               "VALR or BINANCE"),
     "pair":               ("Trading pair",           "e.g. BTCUSDC or BTCUSDT"),
-    "gen_capital":        ("Capital per generation", "Currency per generation"),
-    "slot_size":          ("Slot size",              "Capital per slot"),
-    "split_min_size":     ("Min slot size (split)",  "No split below this"),
-    "max_generations":    ("Max generations",        "Hard cap on generations"),
+    "n_slots":            ("Number of slots",        "How many buy slots"),
+    "slot_size":          ("Slot size (USDC)",       "Whole USDC amount per slot"),
     "buy_drop_pct":       ("Buy trigger drop %",     "% drop over lookback window"),
     "lookback_hours":     ("Lookback hours",         "Window for buy trigger"),
     "dip_sell_pct":       ("Sell target %",          "Base sell target per trade"),
@@ -112,8 +106,6 @@ PARAM_LABELS = {
     "escalation_max_lvl": ("Max escalation levels",  "Cap on escalation depth"),
     "entry_decay_days":   ("Entry decay start (days)","Days before entry eases"),
     "entry_decay_rate":   ("Entry decay rate %/day", "% ease per day"),
-    "new_gen_threshold":  ("New gen trigger %",      "Price below peak to spawn gen"),
-    "new_gen_cooldown_d": ("New gen cooldown (days)","Min days between generations"),
     "check_interval_min": ("Check interval (min)",   "How often bot checks price"),
     "dry_run":            ("Dry run mode",           "True=simulate False=live"),
 }
@@ -131,7 +123,7 @@ def load_strategy_config():
         ("pair",               os.environ.get("TRADING_PAIR")),
         ("dry_run",            os.environ.get("DRY_RUN")),
         ("check_interval_min", os.environ.get("CHECK_INTERVAL_MIN")),
-        ("gen_capital",        os.environ.get("GEN_CAPITAL")),
+        ("n_slots",            os.environ.get("N_SLOTS")),
         ("slot_size",          os.environ.get("SLOT_SIZE")),
     ]:
         if v is not None:
@@ -325,12 +317,13 @@ def get_account_balance(exchange, pair, api_key, api_secret):
                 result = {}
                 for b in data:
                     cur = b.get("currency", "")
+                    if cur not in (base, quote):
+                        continue
                     tot = float(b.get("total", 0))
                     av  = float(b.get("available", 0))
                     rsv = float(b.get("reserved", 0))
-                    if cur in (base, quote) or tot > 0:
-                        result[cur] = {"total": tot, "available": av, "reserved": rsv,
-                                       "is_base": cur == base, "is_quote": cur == quote}
+                    result[cur] = {"total": tot, "available": av, "reserved": rsv,
+                                   "is_base": cur == base, "is_quote": cur == quote}
                 return result
         elif exchange == "BINANCE":
             data, _ = binance_request("/api/v3/account",
@@ -339,12 +332,13 @@ def get_account_balance(exchange, pair, api_key, api_secret):
                 result = {}
                 for b in data["balances"]:
                     cur  = b.get("asset", "")
+                    if cur not in (base, quote):
+                        continue
                     free = float(b.get("free", 0))
                     lkd  = float(b.get("locked", 0))
                     tot  = free + lkd
-                    if cur in (base, quote) or tot > 0:
-                        result[cur] = {"total": tot, "available": free, "reserved": lkd,
-                                       "is_base": cur == base, "is_quote": cur == quote}
+                    result[cur] = {"total": tot, "available": free, "reserved": lkd,
+                                   "is_base": cur == base, "is_quote": cur == quote}
                 return result
     except Exception as e:
         return {"_error": str(e)}
@@ -524,10 +518,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
     <div class="fsec">
       <h3>Capital Settings</h3>
       <div class="fgrid">
-        <div class="ff"><label>Capital per Generation</label><input type="number" name="gen_capital" step="any"><small>Quote currency per generation</small></div>
-        <div class="ff"><label>Slot Size</label><input type="number" name="slot_size" step="any"><small>Capital per slot</small></div>
-        <div class="ff"><label>Min Slot Size (split)</label><input type="number" name="split_min_size" step="any"><small>No split below this</small></div>
-        <div class="ff"><label>Max Generations</label><input type="number" name="max_generations"><small>Hard cap on generations</small></div>
+        <div class="ff"><label>Number of Slots</label><input type="number" name="n_slots" min="1" max="50" step="1"><small>How many buy slots</small></div>
+        <div class="ff"><label>Slot Size (USDC)</label><input type="number" name="slot_size" min="1" step="1"><small>Whole USDC amount per slot</small></div>
       </div>
     </div>
     <div class="fsec">
@@ -562,13 +554,6 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
       </div>
     </div>
     <div class="fsec">
-      <h3>Generation Spawning</h3>
-      <div class="fgrid">
-        <div class="ff"><label>New Gen Trigger %</label><input type="number" name="new_gen_threshold" step="0.1"><small>Price below peak to spawn new gen</small></div>
-        <div class="ff"><label>New Gen Cooldown (days)</label><input type="number" name="new_gen_cooldown_d"><small>Min days between generations</small></div>
-      </div>
-    </div>
-    <div class="fsec">
       <h3>Bot Settings</h3>
       <div class="fgrid">
         <div class="ff"><label>Check Interval (minutes)</label><input type="number" name="check_interval_min"><small>How often the bot checks the price</small></div>
@@ -600,6 +585,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf
 
 <script>
 var _cfg = null;
+var _snap = null;
 
 function showTab(name, btn) {
   document.querySelectorAll('.tab').forEach(function(e){e.classList.remove('on')});
@@ -645,7 +631,8 @@ async function refresh() {
   try {
     var r = await fetch('/api/state');
     var d = await r.json();
-    _cfg = d.cfg;
+    _cfg  = d.cfg;
+    _snap = d;
     // Top bar
     var sb = document.getElementById('b-status');
     sb.textContent = d.status === 'ok' ? 'ONLINE' : 'DEGRADED';
@@ -850,21 +837,29 @@ async function refreshBalances() {
       document.getElementById('c-bbal').textContent = 'Error';
       return;
     }
+    var quoteAvail = 0, baseAvail = 0;
+    var lastPrice  = (_snap && _snap.price_data) ? (_snap.price_data.price || 0) : 0;
     Object.keys(balances).forEach(function(cur) {
       var b = balances[cur];
       if (b.is_quote) {
+        quoteAvail = b.available || 0;
         document.getElementById('c-qlbl').textContent = cur + ' Balance';
-        document.getElementById('c-qbal').textContent = s + (b.available||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+        document.getElementById('c-qbal').textContent = s + quoteAvail.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
         var rsv = b.reserved || 0;
-        document.getElementById('c-qrsv').textContent = rsv > 0 ? 'Reserved: '+s+(rsv).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
+        document.getElementById('c-qrsv').textContent = rsv > 0 ? 'Reserved: '+s+rsv.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2}) : '';
       }
       if (b.is_base) {
+        baseAvail = b.available || 0;
         document.getElementById('c-blbl').textContent = cur + ' Balance';
-        document.getElementById('c-bbal').textContent = (b.available||0).toFixed(6) + ' ' + cur;
+        document.getElementById('c-bbal').textContent = baseAvail.toFixed(6) + ' ' + cur;
         var rsv = b.reserved || 0;
-        document.getElementById('c-brsv').textContent = rsv > 0 ? 'Reserved: '+(rsv).toFixed(6) : '';
+        document.getElementById('c-brsv').textContent = rsv > 0 ? 'Reserved: '+rsv.toFixed(6) : '';
       }
     });
+    var totalVal = quoteAvail + baseAvail * lastPrice;
+    if (totalVal > 0) {
+      document.getElementById('c-port').textContent = s + totalVal.toLocaleString('en',{maximumFractionDigits:0});
+    }
   } catch(e) { console.error('Balance refresh failed', e); }
 }
 
@@ -1006,17 +1001,19 @@ def _start_keep_alive(port):
 #  SECTION 6 — LIVE TRADER
 # =============================================================
 def make_slot(idx):
-    return {"id": idx, "active": idx == 0, "state": "IDLE",
+    return {"id": idx, "active": True, "state": "IDLE",
             "sell_target": 0.05, "dip_btc": 0.0, "dip_entry": None,
             "dip_cost": 0.0, "dip_open_time": None, "dip_orig_target": 0.05,
             "sell_order_id": None, "sell_order_price": None,
             "peak_price": None, "dip_buys": 0, "dip_sells": 0}
 
-def make_generation(gen_id, capital, start_time):
-    n = max(1, int(capital // 100))
+def make_generation(gen_id, n_slots, slot_size, start_time):
+    n_slots   = max(1, int(n_slots))
+    slot_size = int(round(slot_size))
+    capital   = n_slots * slot_size
     return {"id": gen_id, "capital": capital, "free_cash": capital,
-            "slot_size": capital / n, "n_slots": n,
-            "slots": [make_slot(i) for i in range(n)],
+            "slot_size": slot_size, "n_slots": n_slots,
+            "slots": [make_slot(i) for i in range(n_slots)],
             "last_dip_buy_price": None, "last_dip_buy_time": None,
             "last_dip_activity": None, "start_time": start_time, "trade_log": []}
 
@@ -1028,33 +1025,28 @@ def bot_place_limit_sell(btc_qty, sell_price, slot_id, gen_id,
                      f"{btc_qty:.6f} @ {sell_price:,.2f} id={oid}")
         return oid
     if exchange == "VALR":
-        ts   = int(time.time())
-
-        sell_price_int = round(sell_price)   # ✅ NEW LINE
-
+        ts             = int(time.time())
+        sell_price_int = round(sell_price)
         body = {
             "side": "SELL",
             "quantity": f"{btc_qty:.8f}",
-            "price": str(sell_price_int),    # ✅ FIXED
+            "price": str(sell_price_int),
             "pair": symbol,
             "timeInForce": "GTC",
             "customerOrderId": f"LADDER-{gen_id}-{slot_id}-{ts}"[:50]
         }
-
         data, status = valr_request("/v1/orders/limit", method="POST", body=body,
                                     api_key=api_key, api_secret=api_secret)
-
         logging.info(f"VALR LIMIT SELL status={status} data={data}")
-
-    if status in (200, 202):
-        oid = str(data.get("id", data.get("orderId", "")))
-        logging.info(f"LIMIT SELL PLACED Gen{gen_id} Sl{slot_id+1} "
-                     f"{btc_qty:.8f} @ {sell_price_int} id={oid}")   # ✅ FIXED
-        return oid
+        if status in (200, 202):
+            oid = str(data.get("id", data.get("orderId", "")))
+            logging.info(f"LIMIT SELL PLACED Gen{gen_id} Sl{slot_id+1} "
+                         f"{btc_qty:.8f} @ {sell_price_int} id={oid}")
+            return oid
     elif exchange == "BINANCE":
         params = {"symbol": symbol, "side": "SELL", "type": "LIMIT",
                   "timeInForce": "GTC", "quantity": f"{btc_qty:.6f}",
-                  "price": f"{sell_price:.2f}"}
+                  "price": str(round(sell_price))}
         data, status = binance_request("/api/v3/order", method="POST",
                                        params=params, api_key=api_key,
                                        api_secret=api_secret)
@@ -1065,12 +1057,13 @@ def bot_place_limit_sell(btc_qty, sell_price, slot_id, gen_id,
 
 def bot_market_buy(quote_amount, slot_id, gen_id,
                    dry_run, exchange, symbol, api_key, api_secret):
+    quote_amount = int(round(quote_amount))
     if dry_run:
         price = get_live_price(exchange, symbol, api_key, api_secret)
         p   = price["price"] if price else 1
         btc = (quote_amount * (1 - FEE_RATE)) / p
         logging.info(f"[DRY] BUY Gen{gen_id} Sl{slot_id+1} "
-                     f"{quote_amount:.2f} -> {btc:.6f} BTC @ {p:,.2f}")
+                     f"{quote_amount} -> {btc:.6f} BTC @ {p:,.2f}")
         return btc, p
 
     if exchange == "VALR":
@@ -1082,7 +1075,7 @@ def bot_market_buy(quote_amount, slot_id, gen_id,
         ts = int(time.time())
         data, status = valr_request("/v1/orders/market", method="POST", body={
             "side":            "BUY",
-            "quoteAmount":     f"{quote_amount:.8f}",
+            "quoteAmount":     str(quote_amount),
             "pair":            symbol,
             "customerOrderId": f"BUY-{gen_id}-{slot_id}-{ts}"[:50],
         }, api_key=api_key, api_secret=api_secret)
@@ -1133,7 +1126,7 @@ def bot_market_buy(quote_amount, slot_id, gen_id,
 
     elif exchange == "BINANCE":
         params = {"symbol": symbol, "side": "BUY", "type": "MARKET",
-                  "quoteOrderQty": f"{quote_amount:.2f}"}
+                  "quoteOrderQty": str(quote_amount)}
         data, status = binance_request("/api/v3/order", method="POST",
                                        params=params, api_key=api_key,
                                        api_secret=api_secret)
@@ -1238,32 +1231,12 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
     ESC_STEP        = cfg.get("escalation_step", 2.0) / 100
     ESC_MAX         = cfg.get("escalation_max_lvl", 3)
     ENTRY_DECAY_D   = cfg.get("entry_decay_days", 15)
-    SPLIT_MIN       = cfg.get("split_min_size", 30.0)
 
     for slot in slots:
         if slot["state"] == "DIP" and slot["dip_entry"]:
             pk = slot.get("peak_price") or slot["dip_entry"]
             if current_price > pk:
                 slot["peak_price"] = current_price
-
-    n_idle = sum(1 for s in slots if s["state"] == "IDLE")
-    if n_idle == 1:
-        new_sz = free_cash / (len(slots) + 1)
-        if new_sz >= SPLIT_MIN:
-            gen["n_slots"] += 1
-            ns = make_slot(len(slots))
-            ns["active"] = True
-            slots.append(ns)
-            slot_size = free_cash / gen["n_slots"]
-            gen["slot_size"] = slot_size
-            for s in slots:
-                if s["state"] == "DIP" and s["sell_order_id"]:
-                    replace_sell_order(s, gen_id, dry_run, exchange, symbol, api_key, api_secret)
-            logging.info(f"Gen{gen_id} SPLIT -> {gen['n_slots']} slots slot_size={slot_size:.2f}")
-
-    for s in range(1, len(slots)):
-        if not slots[s]["active"] and slots[s-1]["dip_buys"] > 0:
-            slots[s]["active"] = True
 
     for slot in slots:
         if slot["state"] == "DIP" and slot.get("dip_open_time"):
@@ -1321,10 +1294,11 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
         else:
             buy_signal = False
 
-    if buy_signal and free_cash >= slot_size:
+    buy_amount = int(round(slot_size))
+    if buy_signal and free_cash >= buy_amount:
         for slot in slots:
             if slot["active"] and slot["state"] == "IDLE":
-                btc, avg = bot_market_buy(slot_size, slot["id"], gen_id,
+                btc, avg = bot_market_buy(buy_amount, slot["id"], gen_id,
                                           dry_run, exchange, symbol, api_key, api_secret)
                 if btc > 0:
                     orig = min(0.12, SELL_BASE + n_dip * 0.01)
@@ -1332,23 +1306,23 @@ def process_generation(gen, current_price, ref_price, now_str, cfg, api_key, api
                     oid  = bot_place_limit_sell(btc, tp, slot["id"], gen_id,
                                                 dry_run, exchange, symbol, api_key, api_secret)
                     slot.update(state="DIP", dip_btc=btc, dip_entry=avg,
-                                dip_cost=slot_size, dip_open_time=now_str,
+                                dip_cost=buy_amount, dip_open_time=now_str,
                                 dip_orig_target=orig, sell_target=orig,
                                 sell_order_id=oid, sell_order_price=tp, peak_price=avg)
-                    free_cash -= slot_size
+                    free_cash -= buy_amount
                     gen["last_dip_buy_price"] = avg
                     gen["last_dip_buy_time"]  = now_str
                     gen["last_dip_activity"]  = now_str
                     slot["dip_buys"] += 1
                     gen["trade_log"].append({
                         "time": now_str, "type": "BUY", "slot": slot["id"],
-                        "price": avg, "btc": btc, "cost": slot_size,
+                        "price": avg, "btc": btc, "cost": buy_amount,
                         "sell_target": orig, "target_price": tp, "order_id": oid
                     })
                     logging.info(f"Gen{gen_id} Sl{slot['id']+1} BUY {btc:.6f} "
-                                 f"@ {avg:,.2f} sell_order @ {tp:,.2f}")
+                                 f"@ {avg:,.2f} sell_order @ {tp:,.0f}")
                     _tg_send(f"*BUY* Gen{gen_id} Slot{slot['id']+1}\n"
-                             f"Price: {avg:,.2f}  Qty: {btc:.6f}  Target: {tp:,.2f}")
+                             f"Price: {avg:,.2f}  Qty: {btc:.6f}  Target: {tp:,.0f}")
                 break
 
     gen["free_cash"] = free_cash
@@ -1440,11 +1414,12 @@ def run_live_bot():
         except Exception:
             pass
     if state is None:
-        now = datetime.now(timezone.utc).isoformat()
+        now       = datetime.now(timezone.utc).isoformat()
+        n_slots   = cfg.get("n_slots", 10)
+        slot_size = int(round(cfg.get("slot_size", 100)))
         state = {
-            "generations":    [make_generation(1, cfg["gen_capital"], now),
-                               make_generation(2, cfg["gen_capital"], now)],
-            "total_invested": cfg["gen_capital"] * 2,
+            "generations":    [make_generation(1, n_slots, slot_size, now)],
+            "total_invested": n_slots * slot_size,
             "created_at":     now,
         }
         STATE_FILE.write_text(json.dumps(state, indent=2))
@@ -1494,23 +1469,6 @@ def run_live_bot():
                 process_generation(gen, current_price, ref_price, now_str,
                                    cfg, api_key, api_sec)
 
-            if len(state["generations"]) < cfg.get("max_generations", 3):
-                all_stuck = all(
-                    all(s["state"] == "DIP" for s in g["slots"] if s["active"])
-                    and any(s["dip_entry"] for s in g["slots"])
-                    and current_price < max((s["dip_entry"] or 0) for s in g["slots"])
-                      * (1 - cfg.get("new_gen_threshold", 20) / 100)
-                    for g in state["generations"]
-                )
-                if all_stuck:
-                    now_s = datetime.now(timezone.utc).isoformat()
-                    ng    = make_generation(len(state["generations"]) + 1,
-                                           cfg["gen_capital"], now_s)
-                    state["generations"].append(ng)
-                    logging.info(f"GEN {ng['id']} SPAWNED @ {current_price:,.0f}")
-                    _tg_send(f"*GEN {ng['id']} SPAWNED* @ {current_price:,.2f}")
-
-            # Always derive total_invested from actual generation capitals (never a running counter)
             state["total_invested"] = sum(g["capital"] for g in state["generations"])
 
             print_bot_dashboard(state, current_price, cfg)
@@ -2140,7 +2098,9 @@ def run_gui():
                 gid = t["gen_id"]
                 gen = next((g for g in state["generations"] if g["id"] == gid), None)
                 if gen is None:
-                    gen = make_generation(gid, self.params.get("gen_capital", 1100),
+                    _n  = self.params.get("n_slots", 10)
+                    _sz = int(round(self.params.get("slot_size", 100)))
+                    gen = make_generation(gid, _n, _sz,
                                           datetime.now(timezone.utc).isoformat())
                     gen["id"] = gid
                     state["generations"].append(gen)
@@ -2202,12 +2162,11 @@ def run_gui():
             canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
             groups = {
-                "Capital & Sizing":  ["gen_capital","slot_size","split_min_size","max_generations"],
+                "Capital & Sizing":  ["n_slots","slot_size"],
                 "Buy Trigger":       ["exchange","pair","buy_drop_pct","lookback_hours"],
                 "Sell Targets":      ["dip_sell_pct","sell_decay_days","sell_decay_rate","sell_floor_pct"],
                 "Escalation":        ["escalation_start","escalation_step","escalation_max_lvl",
                                       "entry_decay_days","entry_decay_rate"],
-                "Generation Spawn":  ["new_gen_threshold","new_gen_cooldown_d"],
                 "Bot Control":       ["check_interval_min","dry_run"],
             }
             self.param_vars = {}
@@ -2343,10 +2302,11 @@ def run_gui():
                 try: state = json.loads(STATE_FILE.read_text())
                 except Exception: pass
             if state is None:
-                now   = datetime.now(timezone.utc).isoformat()
-                state = {"generations": [make_generation(1, cfg["gen_capital"], now),
-                                         make_generation(2, cfg["gen_capital"], now)],
-                         "total_invested": cfg["gen_capital"] * 2, "created_at": now}
+                now       = datetime.now(timezone.utc).isoformat()
+                n_slots   = cfg.get("n_slots", 10)
+                slot_size = int(round(cfg.get("slot_size", 100)))
+                state = {"generations": [make_generation(1, n_slots, slot_size, now)],
+                         "total_invested": n_slots * slot_size, "created_at": now}
 
             price_history = []
             lkb = cfg.get("lookback_hours", 12)
@@ -2421,12 +2381,21 @@ def run_gui():
 
         def _update_balance_display(self):
             _, quote = self._parse_pair(self.params.get("pair","BTCUSDC"))
+            qsym = {"USDC":"$","USD":"$","USDT":"$","EUR":"€","GBP":"£"}.get(quote, "")
+            price = self.price_data.get("price", 0)
+            quote_avail = base_avail = 0.0
             for cur, info in self.balances.items():
-                sym = {"USDC":"$","USD":"$","USDT":"$","USDC":"$","EUR":"€","GBP":"£"}.get(cur, "")
                 if info.get("is_quote"):
-                    self.bal_q.configure(text=f"{cur}: {sym}{info['total']:,.2f}  (avail: {sym}{info['available']:,.2f})")
+                    quote_avail = info["available"]
+                    self.bal_q.configure(
+                        text=f"{cur}: {qsym}{info['total']:,.2f}  (avail: {qsym}{info['available']:,.2f})")
                 elif info.get("is_base"):
-                    self.bal_b.configure(text=f"{cur}: {info['total']:.6f}  (avail: {info['available']:.6f})")
+                    base_avail = info["available"]
+                    self.bal_b.configure(
+                        text=f"{cur}: {info['total']:.6f}  (avail: {info['available']:.6f})")
+            total_val = quote_avail + base_avail * price
+            self.bal_t.configure(
+                text=f"Total (exchange): {qsym}{total_val:,.2f}  (quote + base at market)")
 
         def _fetch_pairs(self):
             exch = self.exchange_var.get()
@@ -2531,16 +2500,14 @@ def run_gui():
                         return str(v)
                     except Exception: pass
                 return self.params.get(key, default)
-            cap     = _pv("gen_capital", 1100.0)
-            slot_sz = _pv("slot_size",   100.0)
-            n_slots = max(1, int(cap // slot_sz)) if slot_sz > 0 else 11
-            slot_sz = cap / n_slots
-            for g in range(1, 3):
-                self.gen_tree.insert("","end", values=(
-                    f"Gen {g}", "not started yet",
-                    f"{sym}{cap:,.2f}", f"{sym}{cap:,.2f}",
-                    f"0 / {n_slots}", n_slots, f"{sym}{slot_sz:,.2f}",
-                    f"{sym}0.00", f"{sym}0.00", f"{sym}{cap:,.2f}", "0.0%", "0"))
+            n_slots = int(_pv("n_slots",   10))
+            slot_sz = int(round(_pv("slot_size", 100.0)))
+            cap     = n_slots * slot_sz
+            self.gen_tree.insert("","end", values=(
+                "Gen 1", "not started yet",
+                f"{sym}{cap:,.0f}", f"{sym}{cap:,.0f}",
+                f"0 / {n_slots}", n_slots, f"{sym}{slot_sz:,.0f}",
+                f"{sym}0.00", f"{sym}0.00", f"{sym}{cap:,.0f}", "0.0%", "0"))
 
         def _refresh_positions(self):
             for item in self.pos_tree.get_children(): self.pos_tree.delete(item)
